@@ -93,7 +93,7 @@ def get_1password_items(session_token: str, query: str = "") -> List[Dict]:
     except (json.JSONDecodeError, Exception):
         return []
 
-def get_password_from_1password(session_token: str, item_id: str) -> Optional[str]:
+def get_password_from_1password(session_token: str, item_id: str, reveal: bool = True) -> Optional[str]:
     """Retrieve password from 1Password for a specific item"""
     try:
         # Build command based on whether we have app integration or session token
@@ -101,6 +101,9 @@ def get_password_from_1password(session_token: str, item_id: str) -> Optional[st
             cmd = ["op", "item", "get", item_id, "--fields=password"]
         else:
             cmd = ["op", "item", "get", item_id, "--fields=password", "--session", session_token]
+
+        if reveal:
+            cmd.append("--reveal")
         
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return result.stdout.strip()
@@ -153,6 +156,36 @@ def fuzzy_select_with_fzf(items: List[Dict]) -> Optional[Dict]:
         pass
     
     return None
+
+def select_with_numbered_list(items: List[Dict]) -> Optional[Dict]:
+    """Fallback selection using numbered list"""
+    print("\n1Password Items:")
+    print("-" * 60)
+    
+    for i, item in enumerate(items):
+        title = item.get("title", "Untitled")
+        category = item.get("category", "Unknown")
+        url = item.get("urls", [{}])[0].get("href", "") if item.get("urls") else ""
+        
+        display_line = f"{i + 1:2d}. {title} ({category})"
+        if url:
+            display_line += f"\n    {url}"
+        
+        print(display_line)
+    
+    print(f"\nEnter item number (1-{len(items)}) or 0 to cancel:")
+    
+    try:
+        choice = int(input().strip())
+        if choice == 0:
+            return None
+        if 1 <= choice <= len(items):
+            return items[choice - 1]
+    except (ValueError, KeyboardInterrupt):
+        pass
+    
+    return None
+
 
 def main(args: List[str]) -> str:
     """Main entry point for the kitten"""
