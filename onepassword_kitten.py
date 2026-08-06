@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import os
+import shutil
 import subprocess
 import json
 from typing import Optional, List, Dict
@@ -16,10 +18,31 @@ except ImportError:
 # fzf binary path - will be set during installation
 FZF_BINARY_PATH = None
 
-def has_fzf() -> bool:
-    """Check if fzf is available for fuzzy search"""
-    result = subprocess.run(["which", "fzf"], capture_output=True)
-    return result.returncode == 0
+# Kitty launched from the Dock or Finder inherits the launchd PATH
+# (/usr/bin:/bin:/usr/sbin:/sbin), so a bare "op" is not resolvable.
+# Search the usual install directories as well.
+OP_SEARCH_PATHS = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/home/linuxbrew/.linuxbrew/bin",
+    os.path.expanduser("~/.local/bin"),
+]
+
+
+def find_op() -> Optional[str]:
+    """Locate the 1Password CLI binary"""
+    path = os.environ.get("PATH", "")
+    extra = os.pathsep.join(OP_SEARCH_PATHS)
+    return shutil.which("op", path=os.pathsep.join(filter(None, [path, extra])))
+
+
+def op_cmd(*args: str) -> List[str]:
+    """Build an "op" command line using the resolved binary path"""
+    op = find_op()
+    if op is None:
+        raise FileNotFoundError("op")
+    return [op, *args]
 
 
 def authenticate() -> Optional[str]:
@@ -27,7 +50,7 @@ def authenticate() -> Optional[str]:
     # Try to authenticate
     try:
         # First try biometric unlock if available
-        result = subprocess.run(["op", "signin", "--raw"], 
+        result = subprocess.run(op_cmd("signin", "--raw"),
                               capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
             session_token = result.stdout.strip()
@@ -44,8 +67,8 @@ def authenticate() -> Optional[str]:
     try:
         print("Please authenticate with 1Password...")
         # Run interactive signin with --raw, allow stdin but capture stdout
-        result = subprocess.run(["op", "signin", "--raw"], 
-                              stdout=subprocess.PIPE, 
+        result = subprocess.run(op_cmd("signin", "--raw"),
+                              stdout=subprocess.PIPE,
                               text=True)
         if result.returncode == 0:
             session_token = result.stdout.strip()
@@ -63,9 +86,9 @@ def get_1password_items(session_token: str, query: str = "") -> List[Dict]:
     try:
         # Build command based on whether we have app integration or session token
         if session_token == "APP_INTEGRATION":
-            cmd = ["op", "item", "list", "--format=json"]
+            cmd = op_cmd("item", "list", "--format=json")
         else:
-            cmd = ["op", "item", "list", "--format=json", "--session", session_token]
+            cmd = op_cmd("item", "list", "--format=json", "--session", session_token)
         
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         
@@ -98,9 +121,9 @@ def get_password_from_1password(session_token: str, item_id: str) -> Optional[st
     try:
         # Build command based on whether we have app integration or session token
         if session_token == "APP_INTEGRATION":
-            cmd = ["op", "item", "get", item_id, "--fields=password"]
+            cmd = op_cmd("item", "get", item_id, "--fields=password")
         else:
-            cmd = ["op", "item", "get", item_id, "--fields=password", "--session", session_token]
+            cmd = op_cmd("item", "get", item_id, "--fields=password", "--session", session_token)
         
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return result.stdout.strip()
@@ -156,6 +179,10 @@ def fuzzy_select_with_fzf(items: List[Dict]) -> Optional[Dict]:
 
 def main(args: List[str]) -> str:
     """Main entry point for the kitten"""
+    if find_op() is None:
+        return ("ERROR: 1Password CLI ('op') not found. "
+                "Install it, or add its directory to OP_SEARCH_PATHS in this kitten.")
+
     # Authenticate
     session_token = authenticate()
     if not session_token:
